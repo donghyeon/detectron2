@@ -482,6 +482,12 @@ _C.MODEL.RESNETS.DEFORM_MODULATED = False
 # Number of groups in deformable conv.
 _C.MODEL.RESNETS.DEFORM_NUM_GROUPS = 1
 
+# Attention config node
+# Length of (STAGES and HEADS) should be same
+_C.MODEL.RESNETS.ATTENTION = CN()
+_C.MODEL.RESNETS.ATTENTION.STAGES = ["res4"]
+_C.MODEL.RESNETS.ATTENTION.HEADS = [4]
+
 
 # ---------------------------------------------------------------------------- #
 # Solver
