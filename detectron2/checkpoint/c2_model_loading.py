@@ -301,8 +301,26 @@ def align_and_update_state_dicts(model_state_dict, ckpt_state_dict, c2_conversio
         )
     matched_model_keys = matched_keys.values()
     matched_ckpt_keys = matched_keys.keys()
-    # print warnings about unmatched keys on both side
+
+    # init attention weights from pretrained weights
     unmatched_model_keys = [k for k in model_keys if k not in matched_model_keys]
+    matched_attention_keys = match_attention_params_to_pretrained_weights(unmatched_model_keys)
+    for key_model in matched_attention_keys:
+        key_pretrained = matched_attention_keys[key_model]
+        model_state_dict[key_model] = model_state_dict[key_pretrained].clone().detach().squeeze()
+        logger.info(
+            log_str_template.format(
+                key_model,
+                max_len_model,
+                key_pretrained,
+                max_len_ckpt,
+                tuple(model_state_dict[key_model].shape),
+            )
+        )
+    matched_model_keys = matched_keys.values()
+
+    # print warnings about unmatched keys on both side
+    unmatched_model_keys = [k for k in model_keys if k not in matched_model_keys and k not in matched_attention_keys]
     if len(unmatched_model_keys):
         logger.info(get_missing_parameters_message(unmatched_model_keys))
 
@@ -311,3 +329,18 @@ def align_and_update_state_dicts(model_state_dict, ckpt_state_dict, c2_conversio
         logger.info(
             get_unexpected_parameters_message(original_keys[x] for x in unmatched_ckpt_keys)
         )
+
+
+def match_attention_params_to_pretrained_weights(unmatched_model_keys):
+    matched_attention_keys = {}
+    for key in unmatched_model_keys:
+        p = re.compile("(\d+)[.]([a-z]+)_dense_layer")
+        m = p.search(key)
+        if m is not None:
+            key_split = key.split(m.group())
+
+            p_to_match = {'q': '1.conv1', 'k': '2.conv1', 'v': '2.conv1', 'output': '2.conv3'}[m.group(2)]
+            key_to_match = key_split[0] + p_to_match + key_split[1]
+
+            matched_attention_keys[key] = key_to_match
+    return matched_attention_keys
