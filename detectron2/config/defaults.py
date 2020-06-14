@@ -487,6 +487,8 @@ _C.MODEL.RESNETS.DEFORM_NUM_GROUPS = 1
 _C.MODEL.RESNETS.ATTENTION = CN()
 _C.MODEL.RESNETS.ATTENTION.STAGES = ["res4"]
 _C.MODEL.RESNETS.ATTENTION.HEADS = [4]
+_C.MODEL.RESNETS.ATTENTION.QUERY = True
+_C.MODEL.RESNETS.ATTENTION.KEY = True
 
 
 # ---------------------------------------------------------------------------- #

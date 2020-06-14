@@ -23,7 +23,7 @@ class AttentionBlock(CNNBlockBase):
 
     def __init__(self, in_channels, out_channels, *,
                  bottleneck_channels=None, num_heads=1, attention_dropout=0.9,
-                 stride=1, norm="LN"):
+                 stride=1, norm="LN", query=True, key=True):
         super().__init__(in_channels, out_channels, stride)
 
         self.in_channels = in_channels
@@ -34,10 +34,18 @@ class AttentionBlock(CNNBlockBase):
         self.attention_dropout = attention_dropout
 
         # Layers for linearly projecting the queries, keys, and values.
-        self.q_dense_layer = nn.Linear(in_channels, bottleneck_channels, bias=False)
-        self.k_dense_layer = nn.Linear(in_channels, bottleneck_channels, bias=False)
-        self.v_dense_layer = nn.Linear(in_channels, bottleneck_channels, bias=False)
-        self.output_dense_layer = nn.Linear(bottleneck_channels, out_channels, bias=False)
+        if query:
+            self.q_att_layer = nn.Linear(in_channels, bottleneck_channels, bias=False)
+        else:
+            self.q_att_layer = None
+
+        if key:
+            self.k_att_layer = nn.Linear(in_channels, bottleneck_channels, bias=False)
+        else:
+            self.k_att_layer = None
+
+        self.v_att_layer = nn.Linear(in_channels, bottleneck_channels, bias=False)
+        self.output_att_layer = nn.Linear(bottleneck_channels, out_channels, bias=False)
 
         if in_channels != out_channels:
             self.shortcut = nn.Linear(in_channels, out_channels, kernel_size=1,
@@ -48,8 +56,8 @@ class AttentionBlock(CNNBlockBase):
         self.layer_norm = nn.LayerNorm(in_channels)
 
         # Randomly initializing parameters
-        for layer in [self.q_dense_layer, self.k_dense_layer, self.v_dense_layer,
-                      self.output_dense_layer, self.shortcut]:
+        for layer in [self.q_att_layer, self.k_att_layer, self.v_att_layer,
+                      self.output_att_layer, self.shortcut]:
             if layer is not None:  # shortcut can be None
                 weight_init.c2_msra_fill(layer)
                 # nn.init.normal_(layer, std=0.001)
@@ -63,10 +71,10 @@ class AttentionBlock(CNNBlockBase):
         Returns:
             A tensor with shape [batch_size, num_heads, length, bottleneck_channels/num_heads]
         """
-        batch_size, length, _ = x.size()
+        batch_size, length, channels = x.size()
 
         # Calculate depth of last dimension after it has been split.
-        depth = (self.bottleneck_channels // self.num_heads)
+        depth = (channels // self.num_heads)
 
         # Split the last dimension
         x = torch.reshape(x, [batch_size, length, self.num_heads, depth])
@@ -107,9 +115,15 @@ class AttentionBlock(CNNBlockBase):
         # learned projections. This is in preparation of splitting them into
         # multiple heads. Multi-head attention uses multiple queries, keys, and
         # values rather than regular attention (which uses a single q, k, v).
-        q = self.q_dense_layer(x)
-        k = self.k_dense_layer(y)
-        v = self.v_dense_layer(y)
+        if self.q_att_layer is not None:
+            q = self.q_att_layer(x)
+        else:
+            q = x
+        if self.k_att_layer is not None:
+            k = self.k_att_layer(y)
+        else:
+            k = x
+        v = self.v_att_layer(y)
 
         # Split q, k, v into heads.
         q = self.split_heads(q)
@@ -131,7 +145,7 @@ class AttentionBlock(CNNBlockBase):
         out = self.combine_heads(out)
 
         # Run the combined outputs through another linear projection layer.
-        out = self.output_dense_layer(out)
+        out = self.output_att_layer(out)
 
         # Postprocessing: apply dropout and residual connection
         # TODO: Check why dropout hurts the evaluation. For now, dropout is disabled.
@@ -152,12 +166,12 @@ class SelfAttentionBlock(AttentionBlock):
 
 class SelfAttention2DBlock(SelfAttentionBlock):
     def forward(self, x):
-        batch, depth, height, width = x.size() # NCHW
-        x = x.permute(0, 2, 3, 1) # NHWC
-        x = torch.reshape(x, [batch, height * width, depth]) # NLC
+        batch, depth, height, width = x.size()  # NCHW
+        x = x.permute(0, 2, 3, 1)  # NHWC
+        x = torch.reshape(x, [batch, height * width, depth])  # NLC
         x = super().forward(x)
-        x = torch.reshape(x, [batch, height, width, depth]) # NHWC
-        x = x.permute(0, 3, 1, 2) # NCHW
+        x = torch.reshape(x, [batch, height, width, depth])  # NHWC
+        x = x.permute(0, 3, 1, 2)  # NCHW
         return x
 
 
@@ -188,14 +202,15 @@ class ResNetStages(object):
 
 
 class AttResNetStages(ResNetStages):
-    def append_self_attention_blocks(self, stage="res4", num_heads=4):
+    def append_self_attention_blocks(self, stage="res4", num_heads=4, query=True, key=True):
         in_channels = {"res2": 256, "res3": 512, "res4": 1024, "res5": 2048}[stage]
 
-        kwargs = {}
-        kwargs["in_channels"] = in_channels
-        kwargs["out_channels"] = in_channels
-        kwargs["bottleneck_channels"] = int(in_channels / 4)
-        kwargs["num_heads"] = num_heads
+        kwargs = {"in_channels": in_channels,
+                  "out_channels": in_channels,
+                  "bottleneck_channels": int(in_channels / 4),
+                  "num_heads": num_heads,
+                  "query": query,
+                  "key": key}
         self.append_blocks(SelfAttention2DBlock, num_blocks=1, stage=stage, **kwargs)
 
 
@@ -232,6 +247,9 @@ def build_attresnet_backbone(cfg, input_shape):
 
     attention_stages = cfg.MODEL.RESNETS.ATTENTION.STAGES
     attention_heads = cfg.MODEL.RESNETS.ATTENTION.HEADS
+    attention_query = cfg.MODEL.RESNETS.ATTENTION.QUERY
+    attention_key = cfg.MODEL.RESNETS.ATTENTION.KEY
+
     # fmt: on
     assert res5_dilation in {1, 2}, "res5_dilation cannot be {}.".format(res5_dilation)
 
@@ -291,7 +309,10 @@ def build_attresnet_backbone(cfg, input_shape):
     attresnet_stages = AttResNetStages(stages)
     for attention_stage, attention_head in zip(attention_stages, attention_heads):
         attresnet_stages.append_self_attention_blocks(stage=attention_stage,
-                                                      num_heads=attention_head)
+                                                      num_heads=attention_head,
+                                                      query=attention_query,
+                                                      key=attention_key
+                                                      )
     stages = attresnet_stages.stages
 
     return ResNet(stem, stages, out_features=out_features).freeze(freeze_at)

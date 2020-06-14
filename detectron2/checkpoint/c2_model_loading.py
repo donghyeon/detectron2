@@ -331,10 +331,11 @@ def align_and_update_state_dicts(model_state_dict, ckpt_state_dict, c2_conversio
         )
 
 
+# TODO: Check the shape of matched keys
 def match_attention_params_to_pretrained_weights(unmatched_model_keys):
     matched_attention_keys = {}
     for key in unmatched_model_keys:
-        p = re.compile("(\d+)[.]([a-z]+)_dense_layer")
+        p = re.compile("(\d+)[.]([a-z]+)_att_layer")
         m = p.search(key)
         if m is not None:
             key_split = key.split(m.group())
